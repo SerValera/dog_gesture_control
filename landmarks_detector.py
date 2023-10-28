@@ -1,6 +1,7 @@
 import cv2
-from src.hand_tracker import HandTracker
 import numpy as np
+
+from src.hand_tracker import HandTracker
 from tensorflow.keras.models import load_model
 
 # ------------
@@ -16,7 +17,6 @@ detector = HandTracker(
     box_enlarge=1.3
 )
 # ------------
-
 sign_classifier = load_model('models/model2.h5')
 
 SIGNS = ['one', 'two', 'three', 'four', 'five', 'ok', 'rock', 'thumbs_up']
@@ -34,15 +34,6 @@ SIGNS_dict = {
 POINT_COLOR = (0, 255, 0)
 CONNECTION_COLOR = (255, 0, 0)
 THICKNESS = 3
-
-cv2.namedWindow(WINDOW)
-capture = cv2.VideoCapture(0)
-
-if capture.isOpened():
-    hasFrame, frame = capture.read()
-else:
-    hasFrame = False
-
 #        8   12  16  20
 #        |   |   |   |
 #        7   11  15  19
@@ -65,13 +56,17 @@ connections = [
 ]
 
 
-while True:
-    hasFrame, frame = capture.read()
-    image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-    image = cv2.flip(image, 1)
-    frame = cv2.flip(frame, 1)
+from collections import deque
+running_size = 5
+collected_gesture = deque([0])
+for i in range(running_size - 1):
+    collected_gesture.append(i)
+previous_gesture_right = 0
 
+
+def gesture_points_detector(image, frame):
     points, _ = detector(image)
+    gesture_ml = None
 
     if points is not None:
         sign_coords = points.flatten() / float(frame.shape[0]) - 0.5
@@ -85,6 +80,7 @@ while True:
             x0, y0 = points[connection[0]]
             x1, y1 = points[connection[1]]
             cv2.line(frame, (int(x0), int(y0)), (int(x1), int(y1)), CONNECTION_COLOR, THICKNESS)
+
         wrist_x = int(points[0][0])
         wrist_y = int(points[0][1])
         cv2.putText(frame, sign_text, (wrist_x - 20, wrist_y + 10), cv2.FONT_HERSHEY_SIMPLEX, 1,
@@ -92,12 +88,28 @@ while True:
 
         gesture_ml = int(SIGNS_dict[sign_text])
 
-    cv2.imshow(WINDOW, frame)
+        # --- Running mean of the number of the gesture ---
+        collected_gesture.rotate(1)
+        collected_gesture[0] = gesture_ml
+        average = sum(collected_gesture) / running_size
+        rounding = round(average)
+        identical = 1
 
-    key = cv2.waitKey(1)
-    if key == 27:
-        break
+        previous_gesture_right = 0
 
+        for i in range(len(collected_gesture)):
+            for j in range(len(collected_gesture)):
+                if collected_gesture[i] == collected_gesture[j]:
+                    identical = identical * 1
+                else:
+                    identical = identical * 0
 
-capture.release()
-cv2.destroyAllWindows()
+        current_gesture_right = gesture_ml
+        # print(collected_gesture, average, identical, current_gesture_right, previous_gesture_right)
+
+        if (current_gesture_right != previous_gesture_right) and identical:
+            # print('previous:', previous_gesture_right, ', current:', current_gesture_right)
+            previous_gesture_right = current_gesture_right
+            print('I get command ', current_gesture_right, 'for drones!')
+
+    return points, frame, gesture_ml
